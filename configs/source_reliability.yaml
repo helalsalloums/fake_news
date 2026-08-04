@@ -1,0 +1,41 @@
+categories:
+  government: 1.0
+  official_organization: 0.95
+  major_news: 0.85
+  established_media: 0.80
+  blog: 0.40
+  unknown: 0.50
+  social_media: 0.20
+
+domain_categories: {}
+official_domains: []
+news_domains: []
+blog_domains:
+  - blogspot.com
+  - wordpress.com
+  - medium.com
+
+government_suffixes:
+  - .gov
+  - .gov.sa
+  - .gov.ae
+  - .gov.eg
+  - .gov.jo
+  - .gov.lb
+  - .gov.sy
+  - .gov.ma
+  - .gov.dz
+  - .gov.tn
+  - .gov.iq
+  - .gov.kw
+  - .gov.qa
+  - .gov.om
+  - .gov.bh
+
+social_domains:
+  - facebook.com
+  - x.com
+  - twitter.com
+  - tiktok.com
+  - instagram.com
+  - youtube.com

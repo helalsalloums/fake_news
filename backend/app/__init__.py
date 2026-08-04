@@ -1,0 +1,1 @@
+"""Arabic Fact Checker backend."""

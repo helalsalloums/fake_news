@@ -1,0 +1,80 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: factchecker
+      POSTGRES_USER: factchecker
+      POSTGRES_PASSWORD: factchecker
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U factchecker -d factchecker"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - redis_data:/data
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://factchecker:factchecker@postgres:5432/factchecker
+      REDIS_URL: redis://redis:6379/0
+      SEARCH_PROVIDER: ${SEARCH_PROVIDER:-local}
+      SEARCH_API_KEY: ${SEARCH_API_KEY:-}
+      BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
+      GOOGLE_CSE_ID: ${GOOGLE_CSE_ID:-}
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-}
+      ENABLE_NEURAL_MODELS: ${ENABLE_NEURAL_MODELS:-false}
+      VERIFIER_MODEL: ${VERIFIER_MODEL:-models/verifier}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-Qwen/Qwen3-Embedding-0.6B}
+      VECTOR_DB: ${VECTOR_DB:-faiss}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOCAL_SEARCH_FIXTURE: /app/datasets/fixtures/search_results.json
+      SOURCE_RELIABILITY_PATH: /app/configs/source_reliability.yaml
+      EVIDENCE_SCORING_PATH: /app/configs/evidence_scoring.yaml
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+
+  qdrant:
+    image: qdrant/qdrant:v1.13.2
+    profiles: ["qdrant"]
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"
+
+volumes:
+  postgres_data:
+  redis_data:
+  qdrant_data:

@@ -1,0 +1,12 @@
+weights:
+  relevance: 0.40
+  source: 0.25
+  recency: 0.15
+  directness: 0.10
+  agreement: 0.10
+
+thresholds:
+  strong_evidence: 0.65
+  strong_model_probability: 0.70
+  model_margin: 0.20
+  conflict_probability: 0.70

@@ -1,0 +1,17 @@
+services:
+  backend:
+    build:
+      args:
+        INSTALL_ML: "true"
+    environment:
+      ENABLE_NEURAL_MODELS: "true"
+      VERIFIER_MODEL: /app/models/verifier
+    volumes:
+      - ./models:/app/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
