@@ -88,8 +88,11 @@ def prepare_arafa(source: Path, output: Path, seed: int = 42) -> dict[str, Any]:
         for raw in records:
             try:
                 item = adapt_arafa_record(raw)
-            except ValueError:
+            except ValueError as e:
                 rejected += 1
+                if rejected <= 10:
+                    print("Rejected:", e)
+                    print(raw)
                 continue
             key = (normalize_arabic(item["claim"]), normalize_arabic(item["evidence"]))
             if key in seen:
