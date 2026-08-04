@@ -10,7 +10,16 @@ from training.common import LABEL2ID, file_checksum, normalize_label, write_json
 
 CLAIM_FIELDS = ("claim", "claim_text", "statement", "hypothesis")
 EVIDENCE_FIELDS = ("evidence", "evidence_text", "context", "premise", "passage")
-LABEL_FIELDS = ("label", "verdict", "class", "stance")
+LABEL_FIELDS = (
+    "label",
+    "labels",
+    "verdict",
+    "class",
+    "stance",
+    "judgement",
+    "judgment",
+)
+
 GROUP_FIELDS = ("source_id", "article_id", "page_id", "document_id", "source_url", "url")
 
 
