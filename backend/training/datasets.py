@@ -30,8 +30,8 @@ def _first(record: dict[str, Any], names: tuple[str, ...]) -> Any:
     return None
 
 
-def read_json_records(path: Path) -> list[dict[str, Any]]:
-    raw = json.loads(path.read_text(encoding="utf-8"))
+def _extract_records(raw: Any) -> list[dict[str, Any]]:
+    """Extract a flat list of records from an already-parsed JSON object."""
     if isinstance(raw, list):
         return raw
     for key in ("data", "records", "examples", "claims"):
@@ -40,6 +40,16 @@ def read_json_records(path: Path) -> list[dict[str, Any]]:
     if all(isinstance(value, list) for value in raw.values()):
         return [item for rows in raw.values() for item in rows]
     raise ValueError("unsupported dataset JSON structure")
+
+
+def read_json_records(path: Path) -> list[dict[str, Any]]:
+    """Read + parse a JSON file from disk and extract its records.
+
+    Kept for callers that only have a path. prepare_arafa avoids this and
+    reuses its own already-parsed JSON instead, to avoid double-parsing
+    large files.
+    """
+    return _extract_records(json.loads(path.read_text(encoding="utf-8")))
 
 
 def adapt_arafa_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -107,7 +117,13 @@ def prepare_arafa(source: Path, output: Path, seed: int = 42) -> dict[str, Any]:
         }
         adapted = [row for rows in splits.values() for row in rows]
     else:
-        adapted = adapt_rows(read_json_records(source))
+        # Reuse the JSON already parsed above instead of re-reading + re-parsing
+        # the file a second time (that double-parse was causing OOM kills on
+        # large source files).
+        records = _extract_records(raw_json)
+        raw_json = None  # drop the only other reference so it can be freed
+        adapted = adapt_rows(records)
+        records = None
 
     if len(adapted) < 30:
         raise ValueError("too few valid records after validation")
@@ -125,14 +141,15 @@ def prepare_arafa(source: Path, output: Path, seed: int = 42) -> dict[str, Any]:
             "validation": [holdout[index] for index in validation_local],
             "test": [holdout[index] for index in test_local],
         }
-    dataset = DatasetDict(
-        {
-            name: Dataset.from_list(
-                [{k: v for k, v in row.items() if k != "group"} for row in rows]
-            )
-            for name, rows in splits.items()
-        }
-    )
+
+    dataset_dict: dict[str, Any] = {}
+    for name in list(splits.keys()):
+        rows = splits[name]
+        dataset_dict[name] = Dataset.from_list(
+            [{k: v for k, v in row.items() if k != "group"} for row in rows]
+        )
+    dataset = DatasetDict(dataset_dict)
+
     output.mkdir(parents=True, exist_ok=True)
     dataset.save_to_disk(str(output))
     manifest = {
