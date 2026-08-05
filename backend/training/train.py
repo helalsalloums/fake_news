@@ -52,14 +52,23 @@ class WeightedTrainer(Trainer):
         inputs: dict[str, torch.Tensor],
         return_outputs: bool = False,
         num_items_in_batch: torch.Tensor | None = None,
-    ) -> torch.Tensor | tuple[torch.Tensor, Any]:
-        labels = inputs.pop("labels")
-        outputs = model(**inputs)
+    ):
+        labels = inputs["labels"]
+
+        model_inputs = {
+            k: v
+            for k, v in inputs.items()
+            if k != "labels"
+        }
+
+        outputs = model(**model_inputs)
+
         loss = functional.cross_entropy(
             outputs.logits,
             labels,
             weight=self.class_weights.to(outputs.logits.device),
         )
+
         return (loss, outputs) if return_outputs else loss
 
 
@@ -97,9 +106,13 @@ def run_training(config: TrainingConfig) -> Path:
         label2id=LABEL2ID,
         ignore_mismatched_sizes=True,
     )
+
     if config.gradient_checkpointing:
-        model.gradient_checkpointing_enable()
+        model.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False}
+        )
         model.config.use_cache = False
+
     output = Path(config.output_dir)
     arguments = TrainingArguments(
         output_dir=str(output),
@@ -126,6 +139,7 @@ def run_training(config: TrainingConfig) -> Path:
         data_seed=config.seed,
         max_grad_norm=1.0,
     )
+
     trainer = WeightedTrainer(
         model=model,
         args=arguments,
@@ -137,13 +151,18 @@ def run_training(config: TrainingConfig) -> Path:
         class_weights=class_weights(dataset["train"]["label"]),
         callbacks=[EarlyStoppingCallback(config.early_stopping_patience)],
     )
+
     trainer.train()
+
     final_path = output / "best"
     trainer.save_model(final_path)
     tokenizer.save_pretrained(final_path)
+
     metrics = trainer.evaluate(tokenized["test"], metric_key_prefix="test")
     write_json(final_path / "test_metrics.json", metrics)
+
     config.dump(final_path / "training_config.yaml")
+
     (final_path / "training_metadata.json").write_text(
         json.dumps(
             {
@@ -156,6 +175,7 @@ def run_training(config: TrainingConfig) -> Path:
         ),
         encoding="utf-8",
     )
+
     (final_path / "README.md").write_text(
         "# Arabic Evidence Verifier\n\n"
         "A non-generative three-class claim–evidence classifier fine-tuned on ARAFA.\n\n"
@@ -170,6 +190,7 @@ def run_training(config: TrainingConfig) -> Path:
         "before deployment.\n",
         encoding="utf-8",
     )
+
     return final_path
 
 
@@ -177,6 +198,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train the Arabic evidence verifier")
     parser.add_argument("--config", type=Path, required=True)
     args = parser.parse_args()
+
     result = run_training(TrainingConfig.load(args.config))
     print(result)
 
