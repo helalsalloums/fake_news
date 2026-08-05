@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     search_provider: str = "local"
     search_api_key: str | None = None
     brave_search_api_key: str | None = None
+    tavily_api_key: str | None = None
     google_cse_id: str | None = None
     searxng_base_url: str | None = None
     local_search_fixture: Path = Path("../datasets/fixtures/search_results.json")

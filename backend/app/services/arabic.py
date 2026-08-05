@@ -77,6 +77,17 @@ def similarity_ratio(left: str, right: str) -> float:
     return len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
 
 
+def claim_coverage_ratio(claim_text: str, passage_text: str) -> float:
+    """How much of the claim's tokens are found in the passage.
+    Unlike similarity_ratio (Jaccard), this doesn't get diluted by
+    passage length — needed since passages are much longer than claims.
+    """
+    claim_tokens = normalized_tokens(claim_text)
+    passage_tokens = normalized_tokens(passage_text)
+    if not claim_tokens or not passage_tokens:
+        return 0.0
+    return len(claim_tokens & passage_tokens) / len(claim_tokens)
+
 def is_duplicate(left: str, right: str, threshold: float = 0.92) -> bool:
     left_normalized = normalize_arabic(left)
     right_normalized = normalize_arabic(right)

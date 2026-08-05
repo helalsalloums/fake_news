@@ -12,10 +12,14 @@ from app.schemas.domain import (
     Verdict,
     VerificationSignal,
 )
-from app.services.arabic import analyze_arabic, normalize_arabic, similarity_ratio
 
-NEGATIONS = {"لا", "لم", "لن", "ليس", "ليست", "ما", "دون", "غير"}
+from app.services.arabic import analyze_arabic, claim_coverage_ratio, normalize_arabic, normalized_tokens, similarity_ratio
 
+NEGATIONS = {"لا", "لم", "لن", "ليس", "ليست"}
+
+import re
+
+SENTENCE_SPLIT = re.compile(r"(?<=[.!؟?؛;])\s+")
 
 def softmax(values: list[float], temperature: float = 1.0) -> list[float]:
     scaled = [value / max(temperature, 1e-6) for value in values]
@@ -24,31 +28,35 @@ def softmax(values: list[float], temperature: float = 1.0) -> list[float]:
     total = sum(exponents)
     return [value / total for value in exponents]
 
-
 def _numeric_findings(claim: ExtractedClaim, passage: Passage) -> tuple[Verdict | None, list[str]]:
     passage_numbers = set(analyze_arabic(passage.text).numbers)
     claim_numbers = set(claim.numbers)
     if not claim_numbers:
         return None, []
-    if claim_numbers.issubset(passage_numbers):
+    passage_tokens = normalized_tokens(passage.text)
+    entities_present = (
+        all(normalized_tokens(entity).issubset(passage_tokens) for entity in claim.entities)
+        if claim.entities
+        else True
+    )
+    if claim_numbers.issubset(passage_numbers) and entities_present:
         return Verdict.SUPPORTED, ["MATCHING_NUMBERS"]
-    if passage_numbers and similarity_ratio(claim.normalized_text, passage.text) >= 0.18:
+    if passage_numbers and claim_coverage_ratio(claim.normalized_text, passage.text) >= 0.18:
         return Verdict.REFUTED, ["CONFLICTING_NUMBERS"]
     return None, ["CLAIM_NUMBERS_NOT_FOUND"]
 
-
 def _negation_finding(claim: ExtractedClaim, passage: Passage) -> tuple[Verdict | None, list[str]]:
     claim_words = set(normalize_arabic(claim.original_text).split())
-    passage_words = set(normalize_arabic(passage.text).split())
     claim_negated = bool(claim_words & NEGATIONS)
-    passage_negated = bool(passage_words & NEGATIONS)
-    if (
-        similarity_ratio(claim.normalized_text, passage.text) >= 0.25
-        and claim_negated != passage_negated
-    ):
+    sentences = [s for s in SENTENCE_SPLIT.split(passage.text) if s.strip()]
+    if not sentences:
+        return None, []
+    best_sentence = max(sentences, key=lambda s: claim_coverage_ratio(claim.normalized_text, s))
+    best_overlap = claim_coverage_ratio(claim.normalized_text, best_sentence)
+    passage_negated = bool(set(normalize_arabic(best_sentence).split()) & NEGATIONS)
+    if best_overlap >= 0.5 and claim_negated != passage_negated:
         return Verdict.REFUTED, ["NEGATION_MISMATCH"]
     return None, []
-
 
 class RuleBasedVerifier:
     version = "rules-v1"
@@ -61,7 +69,7 @@ class RuleBasedVerifier:
             findings.extend(new_findings)
             if decision:
                 decisions.append(decision)
-        relevance = similarity_ratio(claim.normalized_text, passage.text)
+        relevance = claim_coverage_ratio(claim.normalized_text, passage.text)
         if Verdict.REFUTED in decisions:
             verdict = Verdict.REFUTED
             probabilities = [0.08, 0.84, 0.08]

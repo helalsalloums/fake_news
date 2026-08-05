@@ -11,8 +11,7 @@ from urllib.parse import urlparse
 import yaml
 
 from app.schemas.domain import EvidenceScores, ExtractedClaim, Passage
-from app.services.arabic import normalized_tokens, similarity_ratio
-
+from app.services.arabic import claim_coverage_ratio, normalized_tokens, similarity_ratio
 
 @dataclass(frozen=True)
 class ScoringWeights:
@@ -112,7 +111,9 @@ def directness_score(claim: ExtractedClaim, passage: Passage) -> float:
         for number in claim.numbers
         if number in passage.text.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
     )
-    components = [similarity_ratio(claim.normalized_text, passage.text)]
+
+    components = [claim_coverage_ratio(claim.normalized_text, passage.text)]
+
     if claim.entities:
         components.append(entity_hits / len(claim.entities))
     if claim.numbers:
@@ -140,7 +141,7 @@ class ConfigurableEvidenceRanker:
         domain_counts = Counter(domains)
         output: list[tuple[Passage, EvidenceScores]] = []
         for passage, domain in zip(passages, domains, strict=True):
-            relevance = min(1.0, similarity_ratio(claim.normalized_text, passage.text) * 2.5)
+            relevance = min(1.0, claim_coverage_ratio(claim.normalized_text, passage.text) * 1.4)
             source = self.source_reliability.score(passage.document_url)
             recency = temporal_score(passage.published_at, claimed_at)
             directness = directness_score(claim, passage)

@@ -18,8 +18,9 @@ BLOCKED_HOSTS = {"localhost", "metadata.google.internal"}
 class UnsafeUrlError(ValueError):
     pass
 
+import asyncio
 
-def validate_public_url(url: str) -> None:
+async def validate_public_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise UnsafeUrlError("only public HTTP(S) URLs are allowed")
@@ -31,14 +32,14 @@ def validate_public_url(url: str) -> None:
     if hostname in BLOCKED_HOSTS or hostname.endswith(".localhost"):
         raise UnsafeUrlError("local hosts are not allowed")
     try:
-        addresses = socket.getaddrinfo(hostname, parsed.port or 443, type=socket.SOCK_STREAM)
+        loop = asyncio.get_running_loop()
+        addresses = await loop.getaddrinfo(hostname, parsed.port or 443, type=socket.SOCK_STREAM)
     except socket.gaierror as error:
         raise UnsafeUrlError("host could not be resolved") from error
     for address in addresses:
         ip = ipaddress.ip_address(address[4][0])
         if not ip.is_global:
             raise UnsafeUrlError("non-public address is not allowed")
-
 
 class SecureDocumentFetcher:
     def __init__(
@@ -59,7 +60,7 @@ class SecureDocumentFetcher:
             headers={"User-Agent": "ArabicFactChecker/0.1 (+https://github.com/)"},
         ) as client:
             for _ in range(5):
-                validate_public_url(current_url)
+                await validate_public_url(current_url)
                 async with client.stream("GET", current_url) as response:
                     if response.is_redirect:
                         location = response.headers.get("location")

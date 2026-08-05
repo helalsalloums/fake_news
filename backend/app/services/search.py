@@ -67,6 +67,38 @@ class BraveSearchProvider:
             if row.get("url")
         ]
 
+class TavilySearchProvider:
+    name = "tavily"
+
+    def __init__(self, api_key: str, timeout: float = 15.0) -> None:
+        self.api_key = api_key
+        self.timeout = timeout
+
+    async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(
+                "https://api.tavily.com/search",
+                json={
+                    "api_key": self.api_key,
+                    "query": query,
+                    "search_depth": "basic",
+                    "max_results": min(limit, 20),
+                },
+            )
+            response.raise_for_status()
+        rows = response.json().get("results", [])
+        return [
+            SearchResult(
+                title=row.get("title", ""),
+                url=row["url"],
+                snippet=row.get("content", ""),
+                source="Tavily",
+                provider=self.name,
+                rank=index,
+            )
+            for index, row in enumerate(rows[:limit], start=1)
+            if row.get("url")
+        ]
 
 class SearxngSearchProvider:
     name = "searxng"
@@ -174,11 +206,21 @@ def build_search_provider(
         if not key:
             raise ValueError("BRAVE_SEARCH_API_KEY is required for SEARCH_PROVIDER=brave")
         return BraveSearchProvider(key, getattr(settings, "request_timeout_seconds", 15.0))
+    
     if name == "searxng":
         base_url = getattr(settings, "searxng_base_url", None)
         if not base_url:
             raise ValueError("SEARXNG_BASE_URL is required for SEARCH_PROVIDER=searxng")
         return SearxngSearchProvider(base_url, getattr(settings, "request_timeout_seconds", 15.0))
+    
+    if name == "tavily":
+        key = getattr(settings, "tavily_api_key", None) or getattr(
+            settings, "search_api_key", None
+        )
+        if not key:
+            raise ValueError("TAVILY_API_KEY is required for SEARCH_PROVIDER=tavily")
+        return TavilySearchProvider(key, getattr(settings, "request_timeout_seconds", 15.0))
+    
     if name == "google":
         key = getattr(settings, "search_api_key", None)
         engine_id = getattr(settings, "google_cse_id", None)

@@ -27,3 +27,4 @@ artifacts/
 *.bin
 *.log
 .DS_Store
+.env
