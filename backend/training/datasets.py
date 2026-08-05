@@ -76,16 +76,15 @@ def adapt_arafa_record(record: dict[str, Any]) -> dict[str, Any]:
         "group": normalize_arabic(str(group)),
     }
 
-
 def prepare_arafa(source: Path, output: Path, seed: int = 42) -> dict[str, Any]:
     from datasets import Dataset, DatasetDict
-    from sklearn.model_selection import GroupShuffleSplit
+    from sklearn.model_selection import train_test_split
     import gc
     import time
 
     t0 = time.time()
 
-    print("[1/9] Reading JSON...")
+    print("[1/8] Reading JSON...")
     raw_json = json.loads(source.read_text(encoding="utf-8"))
     print(f"      Done in {time.time() - t0:.1f}s")
 
@@ -96,22 +95,18 @@ def prepare_arafa(source: Path, output: Path, seed: int = 42) -> dict[str, Any]:
         else None
     )
 
-    adapted: list[dict[str, Any]] = []
     rejected = 0
     seen: set[tuple[str, str]] = set()
 
-    def adapt_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def adapt_rows(records):
         nonlocal rejected
 
-        output_rows = []
+        rows = []
         start = time.time()
 
         for i, raw in enumerate(records):
-            if i % 10000 == 0 and i > 0:
-                print(
-                    f"      {i:,}/{len(records):,} "
-                    f"({time.time() - start:.1f}s)"
-                )
+            if i and i % 10000 == 0:
+                print(f"      {i:,}/{len(records):,} ({time.time()-start:.1f}s)")
 
             try:
                 item = adapt_arafa_record(raw)
@@ -128,18 +123,17 @@ def prepare_arafa(source: Path, output: Path, seed: int = 42) -> dict[str, Any]:
                 continue
 
             seen.add(key)
-            output_rows.append(item)
+            rows.append(item)
 
-        return output_rows
+        return rows
 
-    print("[2/9] Adapting records...")
+    print("[2/8] Adapting records...")
 
     if official_splits is not None:
         splits = {
             name: adapt_rows(official_splits[name])
             for name in ("train", "validation", "test")
         }
-        adapted = [row for rows in splits.values() for row in rows]
     else:
         records = _extract_records(raw_json)
         raw_json = None
@@ -150,62 +144,49 @@ def prepare_arafa(source: Path, output: Path, seed: int = 42) -> dict[str, Any]:
         records = None
         gc.collect()
 
-    print(f"[3/9] Adapted {len(adapted):,} records")
+        print(f"[3/8] Adapted {len(adapted):,} records")
 
-    if len(adapted) < 30:
-        raise ValueError("too few valid records after validation")
+        if len(adapted) < 30:
+            raise ValueError("too few valid records after validation")
 
-    if official_splits is None:
-        print("[4/9] Building groups...")
-        groups = [item["group"] for item in adapted]
+        print("[4/8] Splitting dataset...")
 
-        print("[5/9] First split...")
-        splitter = GroupShuffleSplit(
-            n_splits=1,
+        labels = [x["label"] for x in adapted]
+
+        train_rows, holdout = train_test_split(
+            adapted,
             test_size=0.20,
             random_state=seed,
+            stratify=labels,
         )
 
-        train_idx, holdout_idx = next(
-            splitter.split(adapted, groups=groups)
-        )
+        holdout_labels = [x["label"] for x in holdout]
 
-        print("[6/9] First split done")
-
-        holdout = [adapted[i] for i in holdout_idx]
-        holdout_groups = [x["group"] for x in holdout]
-
-        splitter = GroupShuffleSplit(
-            n_splits=1,
+        validation_rows, test_rows = train_test_split(
+            holdout,
             test_size=0.50,
             random_state=seed,
-        )
-
-        val_idx, test_idx = next(
-            splitter.split(holdout, groups=holdout_groups)
+            stratify=holdout_labels,
         )
 
         splits = {
-            "train": [adapted[i] for i in train_idx],
-            "validation": [holdout[i] for i in val_idx],
-            "test": [holdout[i] for i in test_idx],
+            "train": train_rows,
+            "validation": validation_rows,
+            "test": test_rows,
         }
 
-    print("[7/9] Creating HuggingFace Dataset...")
+    print("[5/8] Creating HuggingFace Dataset...")
 
     dataset = DatasetDict(
         {
             name: Dataset.from_list(
-                [
-                    {k: v for k, v in row.items() if k != "group"}
-                    for row in rows
-                ]
+                [{k: v for k, v in row.items() if k != "group"} for row in rows]
             )
             for name, rows in splits.items()
         }
     )
 
-    print("[8/9] Saving dataset...")
+    print("[6/8] Saving dataset...")
 
     output.mkdir(parents=True, exist_ok=True)
     dataset.save_to_disk(str(output))
@@ -228,10 +209,9 @@ def prepare_arafa(source: Path, output: Path, seed: int = 42) -> dict[str, Any]:
 
     write_json(output / "split_manifest.json", manifest)
 
-    print(f"[9/9] Finished in {time.time() - t0:.1f}s")
+    print(f"[7/8] Finished in {time.time()-t0:.1f}s")
 
     return manifest
-
 
 def assert_no_split_leakage(dataset_path: Path) -> None:
     from datasets import load_from_disk
