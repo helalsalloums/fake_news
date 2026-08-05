@@ -80,78 +80,136 @@ def adapt_arafa_record(record: dict[str, Any]) -> dict[str, Any]:
 def prepare_arafa(source: Path, output: Path, seed: int = 42) -> dict[str, Any]:
     from datasets import Dataset, DatasetDict
     from sklearn.model_selection import GroupShuffleSplit
+    import gc
+    import time
 
+    t0 = time.time()
+
+    print("[1/9] Reading JSON...")
     raw_json = json.loads(source.read_text(encoding="utf-8"))
+    print(f"      Done in {time.time() - t0:.1f}s")
+
     official_splits = (
         raw_json
         if isinstance(raw_json, dict)
         and all(isinstance(raw_json.get(name), list) for name in ("train", "validation", "test"))
         else None
     )
+
     adapted: list[dict[str, Any]] = []
     rejected = 0
     seen: set[tuple[str, str]] = set()
 
     def adapt_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         nonlocal rejected
-        output_rows: list[dict[str, Any]] = []
-        for raw in records:
+
+        output_rows = []
+        start = time.time()
+
+        for i, raw in enumerate(records):
+            if i % 10000 == 0 and i > 0:
+                print(
+                    f"      {i:,}/{len(records):,} "
+                    f"({time.time() - start:.1f}s)"
+                )
+
             try:
                 item = adapt_arafa_record(raw)
-            except ValueError as e:
+            except ValueError:
                 rejected += 1
-                if rejected <= 10:
-                    print("Rejected:", e)
-                    print(raw)
                 continue
-            key = (normalize_arabic(item["claim"]), normalize_arabic(item["evidence"]))
+
+            key = (
+                normalize_arabic(item["claim"]),
+                normalize_arabic(item["evidence"]),
+            )
+
             if key in seen:
                 continue
+
             seen.add(key)
             output_rows.append(item)
+
         return output_rows
+
+    print("[2/9] Adapting records...")
 
     if official_splits is not None:
         splits = {
-            name: adapt_rows(official_splits[name]) for name in ("train", "validation", "test")
+            name: adapt_rows(official_splits[name])
+            for name in ("train", "validation", "test")
         }
         adapted = [row for rows in splits.values() for row in rows]
     else:
-        # Reuse the JSON already parsed above instead of re-reading + re-parsing
-        # the file a second time (that double-parse was causing OOM kills on
-        # large source files).
         records = _extract_records(raw_json)
-        raw_json = None  # drop the only other reference so it can be freed
+        raw_json = None
+        gc.collect()
+
         adapted = adapt_rows(records)
+
         records = None
+        gc.collect()
+
+    print(f"[3/9] Adapted {len(adapted):,} records")
 
     if len(adapted) < 30:
         raise ValueError("too few valid records after validation")
 
     if official_splits is None:
+        print("[4/9] Building groups...")
         groups = [item["group"] for item in adapted]
-        first_split = GroupShuffleSplit(n_splits=1, test_size=0.20, random_state=seed)
-        train_indexes, holdout_indexes = next(first_split.split(adapted, groups=groups))
-        holdout = [adapted[index] for index in holdout_indexes]
-        holdout_groups = [item["group"] for item in holdout]
-        second_split = GroupShuffleSplit(n_splits=1, test_size=0.50, random_state=seed)
-        validation_local, test_local = next(second_split.split(holdout, groups=holdout_groups))
+
+        print("[5/9] First split...")
+        splitter = GroupShuffleSplit(
+            n_splits=1,
+            test_size=0.20,
+            random_state=seed,
+        )
+
+        train_idx, holdout_idx = next(
+            splitter.split(adapted, groups=groups)
+        )
+
+        print("[6/9] First split done")
+
+        holdout = [adapted[i] for i in holdout_idx]
+        holdout_groups = [x["group"] for x in holdout]
+
+        splitter = GroupShuffleSplit(
+            n_splits=1,
+            test_size=0.50,
+            random_state=seed,
+        )
+
+        val_idx, test_idx = next(
+            splitter.split(holdout, groups=holdout_groups)
+        )
+
         splits = {
-            "train": [adapted[index] for index in train_indexes],
-            "validation": [holdout[index] for index in validation_local],
-            "test": [holdout[index] for index in test_local],
+            "train": [adapted[i] for i in train_idx],
+            "validation": [holdout[i] for i in val_idx],
+            "test": [holdout[i] for i in test_idx],
         }
 
-    dataset_dict: dict[str, Any] = {}
-    for name in list(splits.keys()):
-        rows = splits[name]
-        dataset_dict[name] = Dataset.from_list(
-            [{k: v for k, v in row.items() if k != "group"} for row in rows]
-        )
-    dataset = DatasetDict(dataset_dict)
+    print("[7/9] Creating HuggingFace Dataset...")
+
+    dataset = DatasetDict(
+        {
+            name: Dataset.from_list(
+                [
+                    {k: v for k, v in row.items() if k != "group"}
+                    for row in rows
+                ]
+            )
+            for name, rows in splits.items()
+        }
+    )
+
+    print("[8/9] Saving dataset...")
 
     output.mkdir(parents=True, exist_ok=True)
     dataset.save_to_disk(str(output))
+
     manifest = {
         "dataset": "ARAFA",
         "source": str(source),
@@ -160,11 +218,18 @@ def prepare_arafa(source: Path, output: Path, seed: int = 42) -> dict[str, Any]:
         "used_official_splits": official_splits is not None,
         "rejected_records": rejected,
         "splits": {
-            name: {"count": len(rows), "labels": dict(Counter(row["label_name"] for row in rows))}
+            name: {
+                "count": len(rows),
+                "labels": dict(Counter(row["label_name"] for row in rows)),
+            }
             for name, rows in splits.items()
         },
     }
+
     write_json(output / "split_manifest.json", manifest)
+
+    print(f"[9/9] Finished in {time.time() - t0:.1f}s")
+
     return manifest
 
 
